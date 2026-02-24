@@ -1,89 +1,436 @@
-from fastapi import FastAPI, UploadFile, HTTPException, Form
-from enum import Enum
-from pydantic import BaseModel, EmailStr, ValidationError
-from typing import Optional
+from fastapi import FastAPI, Depends, HTTPException
+from sqlalchemy import or_
+from sqlalchemy.orm import Session
+from typing import List, Union
+
+from database import SessionLocal, engine, Base
+from models import Book
+import schemas
+import crud
+
+# Jadvallarni yaratish
+Base.metadata.create_all(bind=engine)
+
 app = FastAPI()
-ALLOWED_TYPES = [
-    "application/pdf",
-    "application/msword",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-]
-MAX_SIZE = 10 * 1024 * 1024  # 5 MB
 
-# Image file types allowed
-ALLOWED_IMAGE_TYPES = [
-    "image/jpeg",
-    "image/png",
-    "image/gif",
-    "image/webp"
-]
+# Database dependency
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
-# Mock database - Students
-students_db = [
-    {
-        "id": 1,
-        "name": "Ali Karimov",
-        "bio": "Frontend dasturchi, Vue va React bilan ishlaydi",
-        "website": "https://alikarimov.dev",
-        "avatar": "avatars/ali.png"
-    },
-    {
-        "id": 2,
-        "name": "Vali Tursunov",
-        "bio": "Backend developer, FastAPI va Django mutaxassisi",
-        "website": "https://valitursunov.uz",
-        "avatar": "avatars/vali.png"
-    },
-    {
-        "id": 3,
-        "name": "Dilshod Akramov",
-        "bio": "Mobilograf va video montaj ustasi",
-        "website": "https://dilshodmedia.uz",
-        "avatar": "avatars/dilshod.png"
-    },
-    {
-        "id": 4,
-        "name": "Malika Ismoilova",
-        "bio": "UI/UX dizayner, Figma va Adobe XD",
-        "website": "https://malikadesign.com",
-        "avatar": "avatars/malika.png"
-    },
-    {
-        "id": 5,
-        "name": "Jasur Xolmatov",
-        "bio": "Python o'rganuvchi va Telegram bot developer",
-        "website": "https://jasurbot.dev",
-        "avatar": "avatars/jasur.png"
-    }
-]
+# User endpoints
 
-@app.post("/upload-image")
-async def upload_image(file: UploadFile):
-    if file.content_type not in ALLOWED_TYPES:
-        raise HTTPException(status_code=400, detail=f"faqat{ALLOWED_TYPES} ruxsat berilgan")
-    
-    contents = await file.read()
-    if len(contents) > MAX_SIZE:
-        raise HTTPException(status_code=400, detail="Fayl 10mbdan katta")
-    await file.seek(0)
-    
+@app.post("/create_book", response_model=schemas.BookSchema)
+def create_book(book: schemas.BookSchema, db: Session = Depends(get_db)):
+    return crud.create_book(db=db, book=book)
+
+@app.post("/create_order", response_model=schemas.OrderSchema)
+def create_order(order: schemas.OrderSchema, db: Session = Depends(get_db)):
+    return crud.create_order(db=db, order=order)
+
+@app.post("/create_order_item", response_model=schemas.OrderItemSchema)
+def create_order_item(order_item: schemas.OrderItemSchema, db: Session = Depends(get_db)):
+    return crud.create_item(db=db, item=order_item)
+
+
+@app.get("/books", response_model=List[schemas.BookSchema])
+def list_books( db: Session = Depends(get_db)):
+    return crud.get_books(db)
+
+@app.get("/orders", response_model=List[schemas.OrderSchema])
+def list_orders(db:Session = Depends(get_db)):
+    return crud.get_orders(db)
+@app.get("/order_items", response_model=List[schemas.OrderItemSchema])
+def list_order_items(db:Session = Depends(get_db)):
+    return crud.get_order_items(db)
+@app.delete("/books/{book_id}", response_model=schemas.BookSchema)
+def delete_book(book_id: int, db: Session = Depends(get_db)):
+    db_book = crud.delete_book(db, id=book_id)
+    if db_book is None:
+        raise HTTPException(status_code=404, detail="Book topilmadi")
+    return db_book
+
+
+@app.put("/books/{book_id}")
+def update_book(book_id: int, book: schemas.BookUpdate, db: Session = Depends(get_db)):
+    db_book = crud.update_book(db, id=book_id, book=book)
+    if db_book is None:
+        raise HTTPException(status_code=404, detail="Book topilmadi")
     return {
-        "filename": file.filename,
-        "size": len(contents),
-        "type": file.content_type
+    "message": "Kitob muvaffaqiyatli yangilandi ✅",
+    "data": db_book
     }
+        
+@app.get("/search_book/")
+def search( query: Union[str, None], db: Session = Depends(get_db)):
+    
+    result = db.query(Book).filter(
+        or_(
+            Book.title.contains(query),
+            Book.author.contains(query)
+        )
+    ).all()
+    
+    print(result)
+    return result
+
+@app.get("/search_book_for_stock")
+def search_book(query: Union[str, None], db: Session = Depends(get_db)):
+    result = db.query(Book).filter(Book.price < query).all()
+    
+    return result
+    
+
+# @app.put("/products/{product_id}", response_model=schemas.ProductOut)
+# def update_product(product_id: int, product: schemas.ProductUpdate, db: Session = Depends(get_db)):
+#     db_product = crud.edit_product(db, product_id=product_id, product=product)
+#     if db_product is None:
+#         raise HTTPException(status_code=404, detail="Product not found")
+#     return db_product
+
+
+# @app.delete("/products/{product_id}", response_model=schemas.ProductOut)
+# def delete_product(product_id: int, db: Session = Depends(get_db)):
+#     db_product = crud.delete_product(db, product_id=product_id)
+#     if db_product is None:
+#         raise HTTPException(status_code=404, detail="Product not found")
+#     return db_product
 
 
 
 
-@app.post("/login")
-async def login(username: str = Form(), password: str = Form()):
-    return {"username": username}
 
 
-@app.post("/registration")
-async def registration(mail: EmailStr = Form(), password: str = Form()):
-    return {"mail": mail, "message": "Siz ro'yhatdan o'tdingiz!!"}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# books = [
+#     {"id": 1, "title": "Python Asoslari", "muallif": "Alisher Qodirov", "stock": 3},
+#     {"id": 2, "title": "FastAPI bilan Backend", "muallif": "Jasur Karimov", "stock": 1},
+#     {"id": 3, "title": "Django Amaliyoti", "muallif": "Dilshod Aliyev", "stock": 5},
+#     {"id": 4, "title": "Ma'lumotlar Bazasi Asoslari", "muallif": "Malika Tursunova", "stock": 0},
+#     {"id": 5, "title": "Algoritmlar va Ma'lumotlar Tuzilmasi", "muallif": "Bekzod Rahmonov", "stock": 2},
+# ]
+
+
+
+# class BookNotFoundException(Exception):
+#     def __init__(self, book_id: int):
+#         self.book_id = book_id
+# @app.exception_handler(BookNotFoundException)
+# async def book_not_found_handler(request: Request, exc: BookNotFoundException):
+#     return JSONResponse(
+#         status_code=404,
+#         content={
+#             "xato": "Kitob topilmadi",
+#             "book_id": exc.book_id
+#         }
+#     )
+# @app.get("/book")
+# async def get_book(id: int):
+#     for book in books:
+#         if book["id"] == id:
+#             return book
+#     raise BookNotFoundException(book_id=id)
+
+
+
+# class InsufficientStockException(Exception):
+#     def __init__(self, available: int):
+#         self.available = available
+
+# @app.exception_handler(InsufficientStockException)
+# async def insufficient_stock_handler(request: Request, exc: InsufficientStockException):
+#     return JSONResponse(
+#         status_code=400,
+#         content={
+#             "xato": "Omborda yetarli kitob yo‘q",
+#             "mavjud_miqdor": exc.available
+#         }
+#     )
+
+
+# @app.post("/buy-book")
+# async def buy_book(book_id: int, quantity: int):
+#     for book in books:
+#         if book["id"] == book_id:
+#             if quantity > book["stock"]:
+#                 raise InsufficientStockException(book["stock"])
+#             book["stock"] -= quantity
+#             return {"xabar": "Xarid muvaffaqiyatli amalga oshirildi"}
+#     raise BookNotFoundException(book_id=book_id)
+
+
+
+
+
+# class UserCreate(BaseModel):
+#     ism: str
+#     email: EmailStr
+#     tugilgan_yil: int
+
+
+# from fastapi.exceptions import RequestValidationError
+
+# @app.exception_handler(RequestValidationError)
+# async def validation_exception_handler(request: Request, exc: RequestValidationError):
+#     errors = []
+
+#     for err in exc.errors():
+#         field = err["loc"][-1]
+#         message = err["msg"]
+
+#         if "field required" in message:
+#             message = "Bu maydon majburiy"
+#         elif "value is not a valid email address" in message:
+#             message = "Email noto‘g‘ri formatda"
+#         elif "value is not a valid integer" in message:
+#             message = "Butun son kiriting"
+
+#         errors.append({
+#             "maydon": field,
+#             "xabar": message
+#         })
+
+#     return JSONResponse(
+#         status_code=422,
+#         content={
+#             "xato": "Ma’lumotlar noto‘g‘ri kiritildi",
+#             "detallar": errors
+#         }
+#     )
+
+# @app.post("/user")
+# async def create_user(user: UserCreate):
+#     return {"xabar": "Foydalanuvchi muvaffaqiyatli yaratildi"}
+
+
+
+
+
+# @app.get("/book")
+# async def get_book(id: int):
+#     for i in books:
+#         if i["id"] == id:
+#             return i
+#     raise HTTPException(
+#         status_code=status.HTTP_404_NOT_FOUND,
+#         detail="Bu id dagi kitob yoq"
+#     )
+
+# @app.get("/book_for_adult")
+# async def get_book_for_name(id:int, name:str):
+#     for i in books:
+#         for user in users:
+#             if i["id"] == id and user["ism"] == name:
+#                 return i
+#         raise HTTPException(
+#         status_code=status.HTTP_511_NETWORK_AUTHENTICATION_REQUIRED,
+#         detail="User authdan otmagan"
+#     )
+#     raise HTTPException(
+#         status_code=status.HTTP_404_NOT_FOUND,
+#         detail="Bu id dagi kitob yoq"
+#     )
+            
+#     raise HTTPException(
+#         status_code=status.HTTP_404_NOT_FOUND,
+#         detail="Bu id dagi kitob yoq"
+#     )
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# rasmlar= []
+# ALLOWED_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"]
+# UPLOAD_DIR = Path("uploads/")
+# UPLOAD_DIR.mkdir(exist_ok=True)
+# MAX_SIZE = 5  
+# @app.post("/upload")
+# async def upload_file(files: List[UploadFile]):
+#     uploaded_files = []
+#     for file in files:
+#         if file.content_type not in ALLOWED_TYPES:
+#             raise HTTPException(status_code=400, detail=f"Fayl turi qabul qilinmaydi: {file.content_type}")
+#         if file.size and file.size > MAX_SIZE * 1024 * 1024:
+#             raise HTTPException(status_code=400, detail=f"Fayl juda katta: {file.size / 1024 / 1024:.2f}MB")
+        
+#         if file.filename:
+#             file_path = UPLOAD_DIR / file.filename
+#             with open(file=file_path, mode="wb") as buffer:
+#                 shutil.copyfileobj(file.file, buffer)
+            
+#             size = f"{file.size / 1024 / 1024:.2f}MB" if file.size else "0MB"
+#             name = file.filename
+#             saved_to = str(file_path)
+#             rasmlar.append({"name": name, "size": size, "saved_to": saved_to})
+#             uploaded_files.append({"name": name, "size": size})
+    
+#     return {
+#         "result": "Saqlandi",
+#         "uploaded": uploaded_files,
+#         "total": len(uploaded_files)
+#     }
+
+
+
+# ALLOWED_TYPES = [
+#     "application/pdf",
+#     "application/msword",
+#     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+# ]
+# MAX_SIZE = 10 * 1024 * 1024  # 5 MB
+
+# # Image file types allowed
+# ALLOWED_IMAGE_TYPES = [
+#     "image/jpeg",
+#     "image/png",
+#     "image/gif",
+#     "image/webp"
+# ]
+
+# # Mock database - Students
+# students_db = [
+#     {
+#         "id": 1,
+#         "name": "Ali Karimov",
+#         "bio": "Frontend dasturchi, Vue va React bilan ishlaydi",
+#         "website": "https://alikarimov.dev",
+#         "avatar": "avatars/ali.png"
+#     },
+#     {
+#         "id": 2,
+#         "name": "Vali Tursunov",
+#         "bio": "Backend developer, FastAPI va Django mutaxassisi",
+#         "website": "https://valitursunov.uz",
+#         "avatar": "avatars/vali.png"
+#     },
+#     {
+#         "id": 3,
+#         "name": "Dilshod Akramov",
+#         "bio": "Mobilograf va video montaj ustasi",
+#         "website": "https://dilshodmedia.uz",
+#         "avatar": "avatars/dilshod.png"
+#     },
+#     {
+#         "id": 4,
+#         "name": "Malika Ismoilova",
+#         "bio": "UI/UX dizayner, Figma va Adobe XD",
+#         "website": "https://malikadesign.com",
+#         "avatar": "avatars/malika.png"
+#     },
+#     {
+#         "id": 5,
+#         "name": "Jasur Xolmatov",
+#         "bio": "Python o'rganuvchi va Telegram bot developer",
+#         "website": "https://jasurbot.dev",
+#         "avatar": "avatars/jasur.png"
+#     }
+# ]
+
+# @app.post("/upload-image")
+# async def upload_image(file: UploadFile):
+#     if file.content_type not in ALLOWED_TYPES:
+#         raise HTTPException(status_code=400, detail=f"faqat{ALLOWED_TYPES} ruxsat berilgan")
+    
+#     contents = await file.read()
+#     if len(contents) > MAX_SIZE:
+#         raise HTTPException(status_code=400, detail="Fayl 10mbdan katta")
+#     await file.seek(0)
+    
+#     return {
+#         "filename": file.filename,
+#         "size": len(contents),
+#         "type": file.content_type
+#     }
+
+
+
+
+# @app.post("/login")
+# async def login(username: str = Form(), password: str = Form()):
+#     return {"username": username}
+
+
+# @app.post("/registration")
+# async def registration(mail: EmailStr = Form(), password: str = Form()):
+#     return {"mail": mail, "message": "Siz ro'yhatdan o'tdingiz!!"}
 
 
 # @app.put("/profile/{student_id}")
